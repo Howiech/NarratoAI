@@ -37,6 +37,8 @@ VIDEO_UPLOAD_TYPES = ["mp4", "mov", "avi", "flv", "mkv", "mpeg4"]
 VIDEO_GLOB_PATTERNS = [f"*.{suffix}" for suffix in VIDEO_UPLOAD_TYPES]
 SHORT_DRAMA_NARRATION_LANGUAGE_OPTIONS = [
     ("zh-CN", "简体中文（中国）"),
+    ("zh-TW", "繁體中文（台灣）"),
+    ("zh-HK", "繁體中文（香港）"),
     ("en-US", "英语（美国）"),
     ("ja-JP", "日语（日本）"),
     ("ko-KR", "韩语（韩国）"),
@@ -49,6 +51,8 @@ SHORT_DRAMA_NARRATION_LANGUAGE_OPTIONS = [
 ]
 SHORT_DRAMA_NARRATION_LANGUAGE_VALUES = {
     "zh-CN": "简体中文（中国）",
+    "zh-TW": "繁體中文（台灣）",
+    "zh-HK": "繁體中文（香港）",
     "en-US": "英语（美国）",
     "ja-JP": "日语（日本）",
     "ko-KR": "韩语（韩国）",
@@ -548,10 +552,11 @@ def render_video_file(tr, params):
     source_options = {
         tr("Upload Local Files"): "upload",
         tr("Select from resource directory"): "resource",
+        tr("Download from URL (yt-dlp)"): "ytdlp",
     }
     source_labels = list(source_options.keys())
     default_source_label = source_labels[0]
-    source_default_version = "upload_first_v2"
+    source_default_version = "upload_first_v3"
 
     if st.session_state.get('_video_source_default_version') != source_default_version:
         if (
@@ -564,11 +569,12 @@ def render_video_file(tr, params):
         st.session_state['video_source_selection'] = default_source_label
 
     current_source = st.session_state['video_source_selection']
-    source_caption = (
-        tr("Select a video from resource videos directory")
-        if source_options[current_source] == "resource"
-        else tr("Upload new video files up to 2GB each")
-    )
+    if source_options.get(current_source) == "resource":
+        source_caption = tr("Select a video from resource videos directory")
+    elif source_options.get(current_source) == "ytdlp":
+        source_caption = tr("Paste URL from YouTube, Bilibili, etc.")
+    else:
+        source_caption = tr("Upload new video files up to 2GB each")
     st.markdown(f"**{tr('Video Source')}**  :gray[{source_caption}]")
 
     source = st.pills(
@@ -613,6 +619,90 @@ def render_video_file(tr, params):
             _set_video_origin_state([], params)
             if not video_files:
                 st.info(tr("No video files found in resource videos directory"))
+        return
+
+    if source_options[source] == "ytdlp":
+        from app.services.youtube_service import YoutubeService
+
+        yt_url = st.text_input(
+            tr("Video URL"),
+            placeholder=tr("Enter video URL (e.g. YouTube, Bilibili)"),
+            key="ytdlp_video_url",
+        )
+
+        dl_col1, dl_col2 = st.columns([1, 1])
+        with dl_col1:
+            resolution = st.selectbox(
+                tr("Video Resolution"),
+                options=["best", "1080p", "720p", "480p"],
+                index=0,
+                format_func=lambda x: tr("Highest Quality") if x == "best" else x,
+                key="ytdlp_resolution",
+            )
+        with dl_col2:
+            download_subtitles = st.checkbox(
+                tr("Download Subtitles (SRT)"),
+                value=True,
+                key="ytdlp_subtitles",
+                help=tr("Automatically fetch and convert subtitles to SRT if available"),
+            )
+
+        current_video_paths = _selected_video_paths()
+        if current_video_paths and all(os.path.exists(p) for p in current_video_paths):
+            st.info(
+                tr("Selected videos for processing").format(
+                    count=len(current_video_paths),
+                    files=_format_file_list_for_display(current_video_paths),
+                )
+            )
+
+        if st.button(tr("Start Download"), key="ytdlp_start_download", type="primary", use_container_width=True):
+            if not yt_url or not yt_url.strip():
+                st.error(tr("Please enter a valid video URL"))
+            else:
+                yt_service = YoutubeService()
+                if not yt_service.is_available():
+                    st.error(tr("yt-dlp is not installed. Please run `pip install yt-dlp` in your environment."))
+                else:
+                    status_box = st.status(tr("Downloading video with yt-dlp..."), expanded=True)
+                    try:
+                        with status_box:
+                            st.write(tr("Fetching video and subtitles..."))
+                            result = yt_service.download(
+                                url=yt_url.strip(),
+                                resolution=resolution,
+                                download_subtitles=download_subtitles,
+                            )
+                            downloaded_video = result["video_path"]
+                            _set_video_origin_state([downloaded_video], params)
+                            st.session_state['resource_video_selection'] = downloaded_video
+
+                            if result.get("subtitle_path") and os.path.exists(result["subtitle_path"]):
+                                _set_subtitle_state([result["subtitle_path"]])
+                                status_box.update(
+                                    label=tr("Downloaded video and subtitles successfully: {title}").format(
+                                        title=result["title"]
+                                    ),
+                                    state="complete",
+                                    expanded=False,
+                                )
+                            else:
+                                status_box.update(
+                                    label=tr("Downloaded video successfully (no subtitles found): {title}").format(
+                                        title=result["title"]
+                                    ),
+                                    state="complete",
+                                    expanded=False,
+                                )
+                        time.sleep(0.5)
+                        st.rerun()
+                    except Exception as e:
+                        logger.error(f"yt-dlp 下载失败: {e}")
+                        status_box.update(
+                            label=f"{tr('Download failed')}: {str(e)}",
+                            state="error",
+                            expanded=True,
+                        )
         return
 
     if source_options[source] == "upload":

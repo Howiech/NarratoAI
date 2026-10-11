@@ -49,6 +49,15 @@ install_runtime_dependencies() {
             else
                 log "腾讯云SDK已安装"
             fi
+
+            # 单独安装 yt-dlp（确保安装）
+            log "确保 yt-dlp 已安装..."
+            if ! pip list | grep -q "yt-dlp"; then
+                log "安装 yt-dlp..."
+                pip install --user yt-dlp>=2025.1.15
+            else
+                log "yt-dlp 已安装"
+            fi
             
             # 记录安装时间
             touch "$installed_packages_file"
