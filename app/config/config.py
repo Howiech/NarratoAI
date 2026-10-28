@@ -21,12 +21,16 @@ VOXCPM_ENGINE = "voxcpm_05b"
 VOXCPM_DISPLAY_NAME = "VoxCPM-0.5B"
 VOXCPM2_ENGINE = "voxcpm_2b"
 VOXCPM2_DISPLAY_NAME = "VoxCPM-2B"
+ELEVENLABS_ENGINE = "elevenlabs"
+ELEVENLABS_DISPLAY_NAME = "ElevenLabs TTS"
+DEFAULT_ELEVENLABS_VOICE_ID = "9lHjugDhwqoxA5MhX0az"
 INDEXTTS_VOICE_PREFIX = f"{INDEXTTS_ENGINE}:"
 INDEXTTS_MACOS_VOICE_PREFIX = f"{INDEXTTS_MACOS_ENGINE}:"
 INDEXTTS2_VOICE_PREFIX = f"{INDEXTTS2_ENGINE}:"
 OMNIVOICE_VOICE_PREFIX = f"{OMNIVOICE_ENGINE}:"
 VOXCPM_VOICE_PREFIX = f"{VOXCPM_ENGINE}:"
 VOXCPM2_VOICE_PREFIX = f"{VOXCPM2_ENGINE}:"
+ELEVENLABS_VOICE_PREFIX = f"{ELEVENLABS_ENGINE}:"
 INDEXTTS2_EMOTION_VECTOR_FIELDS = (
     ("happy", "vec_happy"),
     ("angry", "vec_angry"),
@@ -184,6 +188,7 @@ def save_config():
         _cfg["voxcpm_05b"] = voxcpm_05b
         _cfg["voxcpm_2b"] = voxcpm_2b
         _cfg["doubaotts"] = doubaotts
+        _cfg["elevenlabs"] = elevenlabs
         f.write(toml.dumps(_cfg))
 
 
@@ -205,6 +210,7 @@ omnivoice = _cfg.get("omnivoice", {})
 voxcpm_05b = _cfg.get("voxcpm_05b", {})
 voxcpm_2b = _cfg.get("voxcpm_2b", {})
 doubaotts = _cfg.get("doubaotts", {})
+elevenlabs = _cfg.get("elevenlabs", {})
 
 hostname = socket.gethostname()
 

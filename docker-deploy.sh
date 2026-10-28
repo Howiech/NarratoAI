@@ -4,6 +4,8 @@
 
 set -e
 
+export PATH="/usr/local/bin:/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin:$HOME/.local/bin:$PATH"
+
 # 颜色定义
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -78,6 +80,25 @@ check_config() {
     fi
 }
 
+# 执行 docker compose 命令（兼容 v2 与 v1）
+compose_cmd() {
+    if docker compose version &> /dev/null; then
+        docker compose "$@"
+    else
+        docker-compose "$@"
+    fi
+}
+
+# 获取本机局域网 IP
+get_local_ip() {
+    local ip
+    ip=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')
+    if [ -z "$ip" ]; then
+        ip="127.0.0.1"
+    fi
+    echo "$ip"
+}
+
 # 构建镜像
 build_image() {
     log_info "构建 Docker 镜像..."
@@ -87,15 +108,15 @@ build_image() {
         build_args="--no-cache"
     fi
 
-    docker-compose build $build_args
+    compose_cmd build $build_args
 }
 
 # 启动服务
 start_services() {
     log_info "启动 NarratoAI 服务..."
 
-    docker-compose down 2>/dev/null || true
-    docker-compose up -d
+    compose_cmd down 2>/dev/null || true
+    compose_cmd up -d
 }
 
 # 等待服务就绪
@@ -121,14 +142,20 @@ wait_for_service() {
 
 # 显示部署信息
 show_deployment_info() {
+    local local_ip
+    local_ip=$(get_local_ip)
     echo
-    log_info "NarratoAI 部署完成！"
-    echo "访问地址: http://localhost:8501"
+    echo -e "${GREEN}============================================================${NC}"
+    log_info "🚀 NarratoAI 服務已成功啟動！"
+    echo -e "  🌐 本地訪問地址: ${GREEN}http://localhost:8501${NC}"
+    echo -e "  🌐 備用本地地址: ${GREEN}http://127.0.0.1:8501${NC}"
+    echo -e "  🌐 局域網訪問:   ${GREEN}http://${local_ip}:8501${NC}"
+    echo -e "${GREEN}============================================================${NC}"
     echo
     echo "常用命令:"
-    echo "  查看日志: docker-compose logs -f"
-    echo "  停止服务: docker-compose down"
-    echo "  重启服务: docker-compose restart"
+    echo "  查看日志: docker compose logs -f"
+    echo "  停止服务: docker compose down"
+    echo "  重启服务: docker compose restart"
 }
 
 # 主函数

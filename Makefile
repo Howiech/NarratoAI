@@ -24,22 +24,37 @@ deploy: ## 一键部署
 	@echo "$(GREEN)执行一键部署...$(RESET)"
 	./docker-deploy.sh
 
+DOCKER_COMPOSE := $(shell if docker compose version >/dev/null 2>&1; then echo "docker compose"; else echo "docker-compose"; fi)
+LOCAL_IP := $(shell ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || hostname -I 2>/dev/null | awk '{print $$1}' || echo "127.0.0.1")
+
 build: ## 构建 Docker 镜像
 	@echo "$(GREEN)构建 Docker 镜像...$(RESET)"
-	docker-compose build
+	$(DOCKER_COMPOSE) build
 
 up: ## 启动服务
 	@echo "$(GREEN)启动服务...$(RESET)"
-	docker-compose up -d
-	@echo "$(GREEN)访问地址: http://localhost:8501$(RESET)"
+	$(DOCKER_COMPOSE) up -d
+	@echo ""
+	@echo "$(GREEN)============================================================$(RESET)"
+	@echo "$(GREEN)  🚀 NarratoAI 服務已啟動！$(RESET)"
+	@echo "$(GREEN)  🌐 本地訪問地址: http://localhost:8501$(RESET)"
+	@echo "$(GREEN)  🌐 備用本地地址: http://127.0.0.1:8501$(RESET)"
+	@echo "$(GREEN)  🌐 局域網訪問:   http://$(LOCAL_IP):8501$(RESET)"
+	@echo "$(GREEN)============================================================$(RESET)"
 
 down: ## 停止服务
 	@echo "$(YELLOW)停止服务...$(RESET)"
-	docker-compose down
+	$(DOCKER_COMPOSE) down
 
 restart: ## 重启服务
 	@echo "$(YELLOW)重启服务...$(RESET)"
-	docker-compose restart
+	$(DOCKER_COMPOSE) restart
+	@echo ""
+	@echo "$(GREEN)============================================================$(RESET)"
+	@echo "$(GREEN)  🚀 NarratoAI 服務已重啟！$(RESET)"
+	@echo "$(GREEN)  🌐 本地訪問地址: http://localhost:8501$(RESET)"
+	@echo "$(GREEN)  🌐 局域網訪問:   http://$(LOCAL_IP):8501$(RESET)"
+	@echo "$(GREEN)============================================================$(RESET)"
 
 logs: ## 查看日志
 	docker-compose logs -f

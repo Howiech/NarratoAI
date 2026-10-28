@@ -400,6 +400,12 @@ def get_voice_name_for_tts_engine(tts_engine: str) -> str:
         return f"{config.OMNIVOICE_VOICE_PREFIX}{mode}"
     if tts_engine == 'doubaotts':
         return config.ui.get('doubaotts_voice_type', 'BV700_streaming')
+    if tts_engine == getattr(config, 'ELEVENLABS_ENGINE', 'elevenlabs') or tts_engine == 'elevenlabs':
+        return (
+            config.ui.get('elevenlabs_voice_id')
+            or getattr(config, 'elevenlabs', {}).get('voice_id')
+            or getattr(config, 'DEFAULT_ELEVENLABS_VOICE_ID', '9lHjugDhwqoxA5MhX0az')
+        )
     if tts_engine == 'soulvoice':
         voice_uri = config.soulvoice.get('voice_uri', '')
         if voice_uri and not voice_uri.startswith(('soulvoice:', 'speech:')):
@@ -650,10 +656,49 @@ def render_export_jianying_button():
 
 
 
+def get_local_ip() -> str:
+    """获取本机局域网 IP 地址"""
+    import socket
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.settimeout(0.5)
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except Exception:
+        try:
+            return socket.gethostbyname(socket.gethostname())
+        except Exception:
+            return "127.0.0.1"
+
+
+def log_startup_banner():
+    """在应用启动时打印访问地址信息"""
+    if st.session_state.get("startup_banner_logged"):
+        return
+    st.session_state["startup_banner_logged"] = True
+
+    try:
+        port = st.get_option("server.port") or 8501
+    except Exception:
+        port = 8501
+
+    local_ip = get_local_ip()
+    banner = (
+        "\n============================================================\n"
+        f"  🚀 NarratoAI v{config.project_version} 已成功啟動！\n"
+        f"  🌐 本地訪問地址: http://localhost:{port}\n"
+        f"  🌐 備用本地地址: http://127.0.0.1:{port}\n"
+        f"  🌐 局域網訪問:   http://{local_ip}:{port}\n"
+        "============================================================"
+    )
+    logger.info(banner)
+
+
 def main():
     """主函数"""
     init_log()
     init_global_state()
+    log_startup_banner()
 
     # ===== 显式注册 LLM 提供商（最佳实践）=====
     # 在应用启动时立即注册，确保所有 LLM 功能可用

@@ -27,7 +27,6 @@ ENV UV_PROJECT_ENVIRONMENT="/opt/venv" \
 # 复制 uv 项目文件并安装 Python 依赖
 COPY pyproject.toml uv.lock requirements.txt ./
 RUN uv sync --no-dev || uv pip install -r requirements.txt
-RUN uv pip install yt-dlp
 
 # 运行阶段
 FROM python:3.12-slim-bookworm

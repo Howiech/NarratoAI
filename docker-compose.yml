@@ -12,7 +12,12 @@ services:
     volumes:
       - ./storage:/NarratoAI/storage
       - ./config.toml:/NarratoAI/config.toml
+      - ./config.example.toml:/NarratoAI/config.example.toml
       - ./resource:/NarratoAI/resource:rw
+      - ./app:/NarratoAI/app
+      - ./webui:/NarratoAI/webui
+      - ./webui.py:/NarratoAI/webui.py
+      - ./docker-entrypoint.sh:/usr/local/bin/docker-entrypoint.sh:ro
 
     environment:
       - PYTHONUNBUFFERED=1

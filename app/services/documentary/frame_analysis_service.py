@@ -12,6 +12,7 @@ from app.services.documentary.frame_analysis_models import FrameBatchResult
 from app.services.generate_narration_script import generate_narration, parse_frame_analysis_to_markdown
 from app.services.llm.migration_adapter import create_vision_analyzer
 from app.utils import utils, video_processor
+from app.services.video_source_metadata import build_source_background
 
 
 class DocumentaryFrameAnalysisService:
@@ -81,6 +82,7 @@ JSON 必须包含以下键：
             markdown_output=markdown_output,
             video_theme=video_theme,
             custom_prompt=custom_prompt,
+            source_background=build_source_background(video_path),
         )
         narration_raw = generate_narration(
             narration_input,
@@ -154,6 +156,7 @@ JSON 必须包含以下键：
             video_theme=video_theme,
             max_concurrency=concurrency,
             progress_callback=progress,
+            source_background=build_source_background(video_path),
         )
 
         progress(65, "正在整理分析结果...")
@@ -192,8 +195,11 @@ JSON 必须包含以下键：
 
         return items
 
-    def _build_narration_input(self, *, markdown_output: str, video_theme: str, custom_prompt: str) -> str:
+    def _build_narration_input(self, *, markdown_output: str, video_theme: str, custom_prompt: str,
+                               source_background: str = "") -> str:
         context_lines: list[str] = []
+        if source_background:
+            context_lines.append(source_background)
         if (video_theme or "").strip():
             context_lines.append(f"视频主题：{video_theme.strip()}")
         if (custom_prompt or "").strip():
@@ -346,6 +352,7 @@ JSON 必须包含以下键：
         video_theme: str,
         max_concurrency: int,
         progress_callback: Callable[[float, str], None],
+        source_background: str = "",
     ) -> list[FrameBatchResult]:
         semaphore = asyncio.Semaphore(max(1, max_concurrency))
         total = len(batches)
@@ -365,6 +372,7 @@ JSON 必须包含以下键：
                 frame_count=len(frame_paths),
                 video_theme=video_theme,
                 custom_prompt=custom_prompt,
+                source_background=source_background,
             )
             try:
                 async with semaphore:
@@ -409,9 +417,12 @@ JSON 必须包含以下键：
         ]
         return await asyncio.gather(*tasks)
 
-    def _build_batch_prompt(self, *, frame_count: int, video_theme: str, custom_prompt: str) -> str:
+    def _build_batch_prompt(self, *, frame_count: int, video_theme: str, custom_prompt: str,
+                            source_background: str = "") -> str:
         prompt = self._build_analysis_prompt(frame_count=frame_count)
         extra_lines: list[str] = []
+        if source_background:
+            extra_lines.append(source_background)
         if (video_theme or "").strip():
             extra_lines.append(f"视频主题：{video_theme.strip()}")
         if (custom_prompt or "").strip():

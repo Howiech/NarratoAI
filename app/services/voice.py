@@ -1326,6 +1326,10 @@ def tts(
         logger.info("分发到豆包语音 TTS")
         return doubaotts_tts(text, voice_name, voice_file, speed=voice_rate)
 
+    if tts_engine == getattr(config, "ELEVENLABS_ENGINE", "elevenlabs") or tts_engine == "elevenlabs":
+        logger.info("分发到 ElevenLabs TTS")
+        return elevenlabs_tts(text, voice_name, voice_file, speed=voice_rate)
+
     # Fallback for unknown engine - default to azure v1
     logger.warning(f"未知的 TTS 引擎: '{tts_engine}', 将默认使用 Edge TTS (Azure V1)。")
     return azure_tts_v1(text, voice_name, voice_rate, voice_pitch, voice_file)
@@ -1852,6 +1856,8 @@ def tts_multiple(task_id: str, list_script: list, voice_name: str, voice_rate: f
                         config.VOXCPM2_ENGINE,
                     )
                     or tts_engine == "doubaotts"
+                    or tts_engine == getattr(config, "ELEVENLABS_ENGINE", "elevenlabs")
+                    or tts_engine == "elevenlabs"
                 ):
                     # 获取实际音频文件的时长
                     duration = get_audio_duration_from_file(audio_file)
@@ -3041,4 +3047,460 @@ def omnivoice_tts(text: str, voice_name: str, voice_file: str, speed: float = 1.
             time.sleep(2)
 
     logger.error("OmniVoice TTS 生成失败，已达到最大重试次数")
+    return None
+
+
+ELEVENLABS_DEFAULT_VOICE_ID = "9lHjugDhwqoxA5MhX0az"
+
+# ElevenLabs 熱門中英文與台灣口音預設音色列表
+# 格式: (voice_id, 繁中/中文顯示名稱, 英文顯示名稱, 語言分類)
+ELEVENLABS_PRESET_VOICES: list[tuple[str, str, str, str]] = [
+    # 台灣口音熱門配音（預設 Anna Su）
+    (
+        "9lHjugDhwqoxA5MhX0az",
+        "🇹🇼 Anna Su - Casual, Friendly and Bright（中文／台灣口音，輕鬆、親切、明亮）[預設]",
+        "🇹🇼 Anna Su - Casual, Friendly and Bright (Taiwanese Mandarin) [Default]",
+        "zh-TW",
+    ),
+    (
+        "r6qgCCGI7RWKXCagm158",
+        "🇹🇼 Anna Su (專業解說版) - 台灣清晰知性女聲 [YouTube/影視解說]",
+        "🇹🇼 Anna Su (Narration) - Taiwanese Mandarin Female (Clear & Natural)",
+        "zh-TW",
+    ),
+    (
+        "fQj4gJSexpu8RDE2Ii5m",
+        "🇹🇼 小雅 (Xiaoya) - 台灣溫柔日常女聲 [故事/生活旁白]",
+        "🇹🇼 Xiaoya - Taiwanese Mandarin Female (Gentle & Conversational)",
+        "zh-TW",
+    ),
+    # 熱門華語/普通話配音
+    (
+        "ByhETIclHirOlWnWKhHc",
+        "🇨🇳 ShanShan (珊珊) - 活力年輕華語女聲 [短劇/動漫解說]",
+        "🇨🇳 ShanShan - Mandarin Female (Young & Energetic)",
+        "zh-CN",
+    ),
+    (
+        "bhJUNIXWQQ94l8eI2VUf",
+        "🇨🇳 Amy (艾米) - 自然放鬆華語女聲 [日常對話/解說]",
+        "🇨🇳 Amy - Mandarin Female (Natural & Friendly)",
+        "zh-CN",
+    ),
+    (
+        "MI36FIkp9wRP7cpWKPTl",
+        "🇨🇳 Evan Zhao (趙先生) - 沉穩磁性華語男聲 [紀錄片/深度解說]",
+        "🇨🇳 Evan Zhao - Mandarin Male (Calm & Trustworthy)",
+        "zh-CN",
+    ),
+    (
+        "DowyQ68vDpgFYdWVGjc3",
+        "🇨🇳 Jason Chen (陳先生) - 低沉穩重華語男聲 [電影解說/懸疑]",
+        "🇨🇳 Jason Chen - Mandarin Male (Deep & Magnetic)",
+        "zh-CN",
+    ),
+    (
+        "pU9NaAwkoR3v0Mrg3uKz",
+        "🇨🇳 Haoran (浩然) - 專業敘事華語男聲 [影視旁白/商業]",
+        "🇨🇳 Haoran - Mandarin Male (Expressive Narration)",
+        "zh-CN",
+    ),
+    (
+        "W8lBaQb9YIoddhxfQNLP",
+        "🇨🇳 Siqi Liu (劉思齊) - 溫暖柔和華語男聲 [情感故事/有聲書]",
+        "🇨🇳 Siqi Liu - Mandarin Male (Warm & Gentle)",
+        "zh-CN",
+    ),
+    (
+        "BqljjWyTnrioXPCNkCd4",
+        "🇨🇳 Stella Gu (顧小姐) - 清冷御姐華語女聲 [懸疑/冷靜解說]",
+        "🇨🇳 Stella Gu - Mandarin Female (Cool & Distant)",
+        "zh-CN",
+    ),
+    # 熱門英文與多語系配音（配合 eleven_multilingual_v2 亦支援中英雙語）
+    (
+        "21m00Tcm4TlvDq8ikWAM",
+        "🇺🇸 Rachel (瑞秋) - 美式經典知性女聲 [最熱門英文旁白/支援中英]",
+        "🇺🇸 Rachel - American Female (Calm & Clear Narration)",
+        "en-US",
+    ),
+    (
+        "EXAVITQu4vr4xnSDxMaL",
+        "🇺🇸 Sarah (莎拉) - 美式柔和自然女聲 [新聞/故事解說]",
+        "🇺🇸 Sarah - American Female (Soft & Natural)",
+        "en-US",
+    ),
+    (
+        "cgSgspJ2msm6clMCkdW9",
+        "🇺🇸 Jessica (潔西卡) - 美式生動表現力女聲 [短片/社群解說]",
+        "🇺🇸 Jessica - American Female (Expressive & Conversational)",
+        "en-US",
+    ),
+    (
+        "pFZP5JQG7iQjIQuC4Bku",
+        "🇬🇧 Lily (莉莉) - 英式溫暖敘事女聲 [紀錄片/戲劇解說]",
+        "🇬🇧 Lily - British Female (Warm Narration)",
+        "en-GB",
+    ),
+    (
+        "nPczCjzI2devNBz1zQrb",
+        "🇺🇸 Brian (布萊恩) - 美式深沉磁性男聲 [電影預告/史詩解說]",
+        "🇺🇸 Brian - American Male (Deep Narration)",
+        "en-US",
+    ),
+    (
+        "pNInz6obpgDQGcFmaJgB",
+        "🇺🇸 Adam (亞當) - 美式渾厚權威男聲 [最熱門英文解說男聲]",
+        "🇺🇸 Adam - American Male (Deep & Authoritative)",
+        "en-US",
+    ),
+    (
+        "JBFqnCBsd6RMkjVDRZzb",
+        "🇬🇧 George (喬治) - 英式醇厚沉穩男聲 [歷史/人文紀錄片]",
+        "🇬🇧 George - British Male (Warm Storyteller)",
+        "en-GB",
+    ),
+    (
+        "TxGEqnHWrfWFTfGW9XjX",
+        "🇺🇸 Josh (喬許) - 美式年輕深沉男聲 [YouTube/遊戲解說]",
+        "🇺🇸 Josh - American Male (Young & Deep)",
+        "en-US",
+    ),
+    (
+        "iP95p4xoKVk53GoZ742B",
+        "🇺🇸 Chris (克里斯) - 美式自然休閒男聲 [日常/科技解說]",
+        "🇺🇸 Chris - American Male (Casual & Natural)",
+        "en-US",
+    ),
+    (
+        "ErXwobaYiN019PkySvjV",
+        "🇺🇸 Antoni (安東尼) - 美式溫和全能男聲 [商業/教育解說]",
+        "🇺🇸 Antoni - American Male (Well-Rounded)",
+        "en-US",
+    ),
+]
+
+# v4 REST synthesis and audio-tag controls:
+# https://elevenlabs.io/v4
+ELEVENLABS_EMOTIONS = {
+    "neutral": ("自然／不指定", "Natural / unspecified", ""),
+    "happy": ("開心", "Happy", "[happy]"),
+    "excited": ("興奮", "Excited", "[excited]"),
+    "sad": ("悲傷", "Sad", "[sad]"),
+    "angry": ("生氣", "Angry", "[angry]"),
+    "whispering": ("輕聲耳語", "Whispering", "[whispers]"),
+}
+ELEVENLABS_EMOTION_MODELS = {"eleven_v3", "eleven_v4"}
+
+ELEVENLABS_MODELS: list[tuple[str, str, str]] = [
+    (
+        "eleven_v4",
+        "Eleven v4（最新高品質模型，支援情緒與音訊標籤）",
+        "Eleven v4 (Latest high-quality model, emotions and audio tags)",
+    ),
+    (
+        "eleven_multilingual_v2",
+        "Eleven Multilingual v2（推薦：中英雙語與台灣口音最自然、情感最豐富）",
+        "Eleven Multilingual v2 (Recommended: Best for Chinese/Taiwanese & English emotional narration)",
+    ),
+    (
+        "eleven_flash_v2_5",
+        "Eleven Flash v2.5（極速低延遲、字元消耗省 50%，支援中英文等 32 種語言）",
+        "Eleven Flash v2.5 (Ultra-fast, 50% lower cost, supports 32 languages including Chinese & English)",
+    ),
+    (
+        "eleven_turbo_v2_5",
+        "Eleven Turbo v2.5（高品質與速度平衡，支援中英文多語系）",
+        "Eleven Turbo v2.5 (Balanced quality & speed, multilingual)",
+    ),
+    (
+        "eleven_v3",
+        "Eleven v3（高表現力多語系模型，支援情緒標籤）",
+        "Eleven v3 (Expressive multilingual model with emotion tags)",
+    ),
+]
+
+
+def get_elevenlabs_preset_voice_map(lang: str = "zh") -> dict[str, str]:
+    """返回 ElevenLabs 預設音色字典 {voice_id: display_name}"""
+    is_en = str(lang or "zh").lower().startswith("en")
+    return {
+        voice_id: (en_label if is_en else zh_label)
+        for voice_id, zh_label, en_label, _ in ELEVENLABS_PRESET_VOICES
+    }
+
+
+def parse_elevenlabs_voice(voice_name: str) -> str:
+    """解析 ElevenLabs 音色 ID，預設回退至台灣口音 Anna Su (9lHjugDhwqoxA5MhX0az)。"""
+    prefix = getattr(config, "ELEVENLABS_VOICE_PREFIX", "elevenlabs:")
+    cleaned = str(voice_name or "").strip()
+    if cleaned.startswith(prefix):
+        cleaned = cleaned[len(prefix):].strip()
+
+    # 若傳入的是其他引擎的音色名稱（例如含 ':' 或 Azure Neural 格式），則回退到設定的 ElevenLabs voice_id
+    if (
+        not cleaned
+        or ":" in cleaned
+        or cleaned.endswith("Neural")
+        or cleaned.endswith("-Female")
+        or cleaned.endswith("-Male")
+        or cleaned.endswith("_streaming")
+    ):
+        elevenlabs_cfg = getattr(config, "elevenlabs", {}) or {}
+        ui_cfg = getattr(config, "ui", {}) or {}
+        cleaned = (
+            str(elevenlabs_cfg.get("voice_id") or "").strip()
+            or str(ui_cfg.get("elevenlabs_voice_id") or "").strip()
+            or ELEVENLABS_DEFAULT_VOICE_ID
+        )
+    return cleaned
+
+
+def _normalize_elevenlabs_base_url(api_url: str = "") -> str:
+    base_url = (api_url or "https://api.elevenlabs.io").strip().rstrip("/")
+    for suffix in ("/v1/text-to-speech", "/v1/voices", "/v1"):
+        if base_url.endswith(suffix):
+            base_url = base_url[: -len(suffix)].rstrip("/")
+    return base_url or "https://api.elevenlabs.io"
+
+
+def _get_elevenlabs_api_key() -> str:
+    elevenlabs_cfg = getattr(config, "elevenlabs", {}) or {}
+    return (
+        str(elevenlabs_cfg.get("api_key") or "").strip()
+        or os.environ.get("ELEVENLABS_API_KEY", "").strip()
+    )
+
+
+def fetch_elevenlabs_voices(api_key: str = "", api_url: str = "") -> list[dict]:
+    """從 ElevenLabs 帳號拉取可用音色列表（GET /v1/voices）"""
+    resolved_key = (api_key or _get_elevenlabs_api_key()).strip()
+    if not resolved_key:
+        return []
+
+    elevenlabs_cfg = getattr(config, "elevenlabs", {}) or {}
+    base_url = _normalize_elevenlabs_base_url(api_url or elevenlabs_cfg.get("api_url", "https://api.elevenlabs.io"))
+    url = f"{base_url}/v1/voices"
+    headers = {
+        "xi-api-key": resolved_key,
+        "Accept": "application/json",
+    }
+    proxies = _get_configured_proxies()
+    try:
+        response = requests.get(url, headers=headers, proxies=proxies, timeout=20)
+        if response.status_code == 200:
+            data = response.json()
+            voices = data.get("voices", []) if isinstance(data, dict) else []
+            result = []
+            for v in voices:
+                if not isinstance(v, dict) or not v.get("voice_id"):
+                    continue
+                result.append({
+                    "voice_id": v["voice_id"],
+                    "name": v.get("name", v["voice_id"]),
+                    "category": v.get("category", "premade"),
+                    "labels": v.get("labels", {}) or {},
+                    "preview_url": v.get("preview_url", ""),
+                })
+            return result
+        logger.warning(f"拉取 ElevenLabs 音色列表失敗: {response.status_code} - {response.text}")
+    except Exception as e:
+        logger.warning(f"拉取 ElevenLabs 音色列表異常: {e}")
+    return []
+
+
+def _try_auto_add_elevenlabs_shared_voice(
+    base_url: str,
+    api_key: str,
+    voice_id: str,
+    proxies: dict,
+) -> str | None:
+    """當使用社群音色庫 (Voice Library) 音色且尚未加入帳號時，嘗試自動透過 API 加入至 My Voices。"""
+    headers = {
+        "xi-api-key": api_key,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    try:
+        search_url = f"{base_url}/v1/shared-voices"
+        resp = requests.get(
+            search_url,
+            headers=headers,
+            params={"search": voice_id, "page_size": 10},
+            proxies=proxies,
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return None
+        voices = resp.json().get("voices", [])
+        target = None
+        for item in voices:
+            if isinstance(item, dict) and item.get("voice_id") == voice_id:
+                target = item
+                break
+        if not target and voices:
+            target = voices[0]
+        if not target:
+            return None
+
+        public_owner_id = target.get("public_owner_id")
+        voice_name = target.get("name") or f"NarratoAI_{voice_id[:6]}"
+        if not public_owner_id:
+            return None
+
+        add_url = f"{base_url}/v1/voices/add/{public_owner_id}/{voice_id}"
+        add_resp = requests.post(
+            add_url,
+            headers=headers,
+            json={"new_name": voice_name},
+            proxies=proxies,
+            timeout=15,
+        )
+        if add_resp.status_code == 200:
+            added_id = add_resp.json().get("voice_id") or voice_id
+            logger.info(f"已自動將 ElevenLabs 社群音色 '{voice_name}' ({voice_id}) 加入您的帳號音色庫")
+            return added_id
+    except Exception as e:
+        logger.debug(f"自動添加 ElevenLabs 共享音色失敗: {e}")
+    return None
+
+
+def elevenlabs_tts(
+    text: str,
+    voice_name: str,
+    voice_file: str,
+    speed: float = 1.0,
+) -> Union[SubMaker, None]:
+    """
+    使用 ElevenLabs API 進行高品質中英文與台灣口音語音合成。
+    預設音色為台灣口音女聲 Anna Su (9lHjugDhwqoxA5MhX0az)。
+    """
+    elevenlabs_cfg = getattr(config, "elevenlabs", {}) or {}
+    api_key = _get_elevenlabs_api_key()
+    if not api_key:
+        logger.error(
+            "ElevenLabs API Key 未配置，請在 WebUI「音頻設置 -> ElevenLabs TTS」或 config.toml [elevenlabs] 中填寫 api_key"
+        )
+        return None
+
+    base_url = _normalize_elevenlabs_base_url(
+        elevenlabs_cfg.get("api_url", "https://api.elevenlabs.io")
+    )
+    model_id = str(elevenlabs_cfg.get("model_id", "eleven_multilingual_v2") or "eleven_multilingual_v2").strip()
+    voice_id = parse_elevenlabs_voice(voice_name)
+
+    def _bounded_float(key: str, default: float, low: float, high: float) -> float:
+        try:
+            val = float(elevenlabs_cfg.get(key, default))
+        except (TypeError, ValueError):
+            val = default
+        return max(low, min(high, val))
+
+    stability = _bounded_float("stability", 0.5, 0.0, 1.0)
+    similarity_boost = _bounded_float("similarity_boost", 0.75, 0.0, 1.0)
+    style = _bounded_float("style", 0.0, 0.0, 1.0)
+    use_speaker_boost = bool(elevenlabs_cfg.get("use_speaker_boost", True))
+
+    # ElevenLabs speed 支援範圍為 0.7 ~ 1.2
+    raw_speed = speed if speed and speed != 1.0 else float(elevenlabs_cfg.get("speed", 1.0) or 1.0)
+    safe_speed = round(max(0.7, min(1.2, float(raw_speed))), 2)
+
+    headers = {
+        "xi-api-key": api_key,
+        "Content-Type": "application/json",
+        "Accept": "audio/mpeg",
+    }
+
+    payload = {
+        "text": text.strip(),
+        "model_id": model_id,
+        "voice_settings": {
+            "stability": stability,
+            "similarity_boost": similarity_boost,
+            "style": style,
+            "use_speaker_boost": use_speaker_boost,
+            "speed": safe_speed,
+        },
+    }
+
+    # v4 accepts stability/similarity only; style, speed and speaker boost
+    # are not supported. Emotion tags must not leak into subtitles.
+    if model_id == "eleven_v4":
+        payload["voice_settings"] = {
+            "stability": stability,
+            "similarity_boost": similarity_boost,
+        }
+    elif model_id == "eleven_v3":
+        payload["voice_settings"]["stability"] = min(
+            (0.0, 0.5, 1.0), key=lambda value: abs(value - stability)
+        )
+        payload["voice_settings"].pop("use_speaker_boost")
+    if model_id in ELEVENLABS_EMOTION_MODELS:
+        emotion = ELEVENLABS_EMOTIONS.get(str(elevenlabs_cfg.get("emotion", "neutral")))
+        if emotion and emotion[2]:
+            payload["text"] = f"{emotion[2]} {payload['text']}"
+
+    proxies = _get_configured_proxies()
+    tried_auto_add = False
+
+    for attempt in range(3):
+        try:
+            url = f"{base_url}/v1/text-to-speech/{voice_id}?output_format=mp3_44100_128"
+            logger.info(
+                f"第 {attempt + 1} 次調用 ElevenLabs TTS API: voice_id={voice_id}, model={model_id}, speed={safe_speed}"
+            )
+            response = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                proxies=proxies,
+                timeout=90,
+            )
+
+            if response.status_code == 200 and response.content:
+                with open(voice_file, "wb") as f:
+                    f.write(response.content)
+
+                if os.path.getsize(voice_file) > 0:
+                    logger.success(
+                        f"ElevenLabs TTS 生成成功: {voice_file}, 大小: {os.path.getsize(voice_file)} 字節"
+                    )
+                    sub_maker = new_sub_maker()
+                    duration = get_audio_duration_from_file(voice_file)
+                    duration_ms = (
+                        int(duration * 1000)
+                        if duration > 0
+                        else max(1000, int(len(text) * 200))
+                    )
+                    add_subtitle_event(sub_maker, 0, duration_ms * 10000, text)
+                    return sub_maker
+
+            # 若音色屬於 Voice Library 且尚未加入帳號，嘗試自動加入一次並重試
+            if (
+                response.status_code in (400, 404)
+                and not tried_auto_add
+                and ("voice_not_found" in response.text.lower() or "not found" in response.text.lower())
+            ):
+                tried_auto_add = True
+                added_voice_id = _try_auto_add_elevenlabs_shared_voice(
+                    base_url, api_key, voice_id, proxies
+                )
+                if added_voice_id:
+                    voice_id = added_voice_id
+                    continue
+
+            logger.error(
+                f"ElevenLabs TTS API 調用失敗: {response.status_code} - {response.text}"
+            )
+        except requests.exceptions.Timeout:
+            logger.error(f"ElevenLabs TTS API 調用超時 (嘗試 {attempt + 1}/3)")
+        except requests.exceptions.RequestException as e:
+            logger.error(f"ElevenLabs TTS API 網路錯誤: {str(e)} (嘗試 {attempt + 1}/3)")
+        except Exception as e:
+            logger.error(f"ElevenLabs TTS 處理錯誤: {str(e)} (嘗試 {attempt + 1}/3)")
+
+        if attempt < 2:
+            time.sleep(2)
+
+    logger.error("ElevenLabs TTS 生成失敗，已達到最大重試次數")
     return None

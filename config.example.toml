@@ -295,8 +295,25 @@
     pitch = 1.0
     silence_duration = 0.125
 
+[elevenlabs]
+    # ElevenLabs TTS 配置（支援多語系中英文與台灣口音配音）
+    # API Key 申請地址：https://elevenlabs.io/app/settings/api-keys
+    api_key = ""
+    api_url = "https://api.elevenlabs.io"
+    # 可選最新模型 eleven_v4，支援情緒與音訊標籤
+    model_id = "eleven_multilingual_v2"
+    # 情緒僅適用 eleven_v4 / eleven_v3：neutral, happy, excited, sad, angry, whispering
+    emotion = "neutral"
+    # 預設中文音色：Anna Su - Casual, Friendly and Bright（台灣口音）
+    voice_id = "9lHjugDhwqoxA5MhX0az"
+    stability = 0.5
+    similarity_boost = 0.75
+    style = 0.0
+    use_speaker_boost = true
+    speed = 1.0
+
 [ui]
-    # TTS引擎选择 (indextts, indextts2, omnivoice, edge_tts, qwen3_tts, tencent_tts, doubaotts, azure_speech)
+    # TTS引擎选择 (indextts, indextts2, omnivoice, edge_tts, qwen3_tts, tencent_tts, doubaotts, elevenlabs, azure_speech)
     tts_engine = "indextts"
 
     # Edge TTS 配置
@@ -314,6 +331,10 @@
     # 豆包语音 TTS 配置
     doubaotts_voice_type = "BV700_V2_streaming"
     doubaotts_rate = 1.0
+
+    # ElevenLabs TTS 配置（預設為台灣口音 Anna Su）
+    elevenlabs_voice_id = "9lHjugDhwqoxA5MhX0az"
+    elevenlabs_rate = 1.0
 
     # 字幕遮罩配置：用于在烧录新字幕前遮盖原视频自带字幕
     subtitle_mask_enabled = false

@@ -12,6 +12,7 @@ except ImportError:
 
 from app.config import config
 from app.utils import utils
+from app.services.video_source_metadata import save_source_metadata
 
 try:
     import yt_dlp
@@ -148,7 +149,9 @@ class YoutubeService:
             outtmpl = os.path.join(output_dir, f"{safe_name}.%(ext)s")
             expected_stem = safe_name
         else:
-            outtmpl = os.path.join(output_dir, "%(title).80B-%(id)s.%(ext)s")
+            # Keep titles up to the filesystem budget; the unabridged title is
+            # also saved separately so long titles never lose story context.
+            outtmpl = os.path.join(output_dir, "%(title).200B-%(id).30B.%(ext)s")
             expected_stem = None
 
         ydl_opts: Dict[str, Any] = {
@@ -265,6 +268,7 @@ class YoutubeService:
                     else:
                         logger.info("未检索到可用字幕文件")
 
+                save_source_metadata(video_path, info)
                 logger.info(f"视频下载成功: {video_path}")
                 return {
                     "task_id": task_id,

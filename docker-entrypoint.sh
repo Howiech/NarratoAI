@@ -8,9 +8,14 @@ log() {
 
 # 函数：安装运行时依赖
 install_runtime_dependencies() {
-    log "检查并安装运行时依赖..."
+    log "检查运行环境依赖..."
     
-    # 检查是否需要安装新的依赖
+    # 如果构建阶段的虚拟环境 /opt/venv 已经包含核心依赖，直接跳过耗时的 pip 重装
+    if python -c "import streamlit, yt_dlp, tencentcloud, requests" >/dev/null 2>&1; then
+        log "虚拟环境依赖已就绪 (streamlit, yt-dlp, tencentcloud 等均已安装)，跳过重复安装"
+        return 0
+    fi
+
     local requirements_file="requirements.txt"
     local installed_packages_file="/tmp/installed_packages.txt"
     
@@ -18,48 +23,10 @@ install_runtime_dependencies() {
     if [ -f "$requirements_file" ]; then
         if [ ! -f "$installed_packages_file" ] || [ "$requirements_file" -nt "$installed_packages_file" ]; then
             log "发现新的依赖需求，开始安装..."
-            
-            # 尝试使用sudo安装，如果失败则使用用户级安装
-            if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
-                log "尝试使用sudo安装依赖..."
-                sudo pip install --no-cache-dir -r "$requirements_file" 2>&1 | while read line; do
-                    log "pip: $line"
-                done
-                INSTALL_RESULT=${PIPESTATUS[0]}
-            else
-                INSTALL_RESULT=1  # 设置为失败，触发用户级安装
-            fi
-            
-            # 如果sudo安装失败，尝试用户级安装
-            if [ $INSTALL_RESULT -ne 0 ]; then
-                log "尝试用户级安装依赖..."
-                pip install --user --no-cache-dir -r "$requirements_file" 2>&1 | while read line; do
-                    log "pip: $line"
-                done
-                
-                # 确保用户级安装的包在PATH中
-                export PATH="$HOME/.local/bin:$PATH"
-            fi
-            
-            # 单独安装腾讯云SDK（确保安装）
-            log "确保腾讯云SDK已安装..."
-            if ! pip list | grep -q "tencentcloud-sdk-python"; then
-                log "安装腾讯云SDK..."
-                pip install --user tencentcloud-sdk-python>=3.0.1200
-            else
-                log "腾讯云SDK已安装"
-            fi
-
-            # 单独安装 yt-dlp（确保安装）
-            log "确保 yt-dlp 已安装..."
-            if ! pip list | grep -q "yt-dlp"; then
-                log "安装 yt-dlp..."
-                pip install --user yt-dlp>=2025.1.15
-            else
-                log "yt-dlp 已安装"
-            fi
-            
-            # 记录安装时间
+            pip install --user --no-cache-dir -r "$requirements_file" 2>&1 | while read line; do
+                log "pip: $line"
+            done
+            export PATH="$HOME/.local/bin:$PATH"
             touch "$installed_packages_file"
             log "依赖安装完成"
         else
@@ -109,6 +76,13 @@ start_webui() {
         fi
     fi
 
+    echo "============================================================"
+    echo "  🚀 NarratoAI WebUI 正在啟動..."
+    echo "  🌐 請在瀏覽器中打開以下地址訪問："
+    echo "     👉 本地訪問地址: http://localhost:8501"
+    echo "     👉 備用本地地址: http://127.0.0.1:8501"
+    echo "============================================================"
+
     # 启动 Streamlit 应用
     exec streamlit run webui.py \
         --server.address=0.0.0.0 \
@@ -117,7 +91,7 @@ start_webui() {
         --server.maxUploadSize=2048 \
         --server.enableXsrfProtection=false \
         --browser.gatherUsageStats=false \
-        --browser.serverAddress=0.0.0.0 \
+        --browser.serverAddress=localhost \
         --logger.level=info
 }
 

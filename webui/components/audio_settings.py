@@ -84,6 +84,7 @@ def get_tts_engine_options(tr=lambda key: key):
         config.VOXCPM_ENGINE: config.VOXCPM_DISPLAY_NAME,
         config.VOXCPM2_ENGINE: config.VOXCPM2_DISPLAY_NAME,
         "edge_tts": "Edge TTS",
+        "elevenlabs": tr("ElevenLabs TTS"),
         "qwen3_tts": tr("Tongyi Qwen3 TTS"),
         "tencent_tts": tr("Tencent Cloud TTS"),
         "doubaotts": tr("Doubao TTS"),
@@ -118,6 +119,12 @@ def get_tts_engine_descriptions(tr=lambda key: key):
             "features": tr("Edge TTS features"),
             "use_case": tr("Edge TTS use case"),
             "registration": None
+        },
+        "elevenlabs": {
+            "title": tr("ElevenLabs TTS"),
+            "features": tr("ElevenLabs TTS features"),
+            "use_case": tr("ElevenLabs TTS use case"),
+            "registration": "https://elevenlabs.io/app/settings/api-keys"
         },
         "azure_speech": {
             "title": "Azure Speech Services",
@@ -634,6 +641,8 @@ def render_tts_settings(tr):
         render_voxcpm2_tts_settings(tr)
     elif selected_engine == "doubaotts":
         render_doubaotts_settings(tr)
+    elif selected_engine == "elevenlabs":
+        render_elevenlabs_tts_settings(tr)
 
     # 4. 试听功能
     render_voice_preview_new(tr, selected_engine)
@@ -1944,8 +1953,297 @@ def render_doubaotts_settings(tr):
         st.warning(tr("Please configure missing fields").format(fields="API Key / AppID + Token"))
 
 
+def render_elevenlabs_tts_settings(tr):
+    """渲染 ElevenLabs TTS 设置（支援中英文與台灣口音 Anna Su 預設配音）"""
+    if not hasattr(config, "elevenlabs") or not isinstance(config.elevenlabs, dict):
+        config.elevenlabs = {}
+    elevenlabs_cfg = config.elevenlabs
+
+    default_voice_id = getattr(config, "DEFAULT_ELEVENLABS_VOICE_ID", "9lHjugDhwqoxA5MhX0az")
+    saved_api_key = elevenlabs_cfg.get("api_key", "") or os.environ.get("ELEVENLABS_API_KEY", "")
+
+    api_key = st.text_input(
+        "ElevenLabs API Key (xi-api-key)",
+        value=saved_api_key,
+        type="password",
+        help=tr("ElevenLabs API Key Help"),
+        placeholder="sk_...",
+    )
+
+    ui_lang = str(st.session_state.get("ui_language", "zh-CN")).lower()
+    is_en = ui_lang.startswith("en")
+
+    # 模型選擇
+    model_options = {
+        model_id: (en_desc if is_en else zh_desc)
+        for model_id, zh_desc, en_desc in voice.ELEVENLABS_MODELS
+    }
+    saved_model_id = elevenlabs_cfg.get("model_id", "eleven_multilingual_v2")
+    if saved_model_id not in model_options:
+        saved_model_id = "eleven_multilingual_v2"
+
+    model_ids = list(model_options.keys())
+    selected_model_id = st.selectbox(
+        tr("ElevenLabs Model"),
+        options=model_ids,
+        index=model_ids.index(saved_model_id),
+        format_func=lambda m: model_options[m],
+        help=tr("ElevenLabs Model Help"),
+    )
+
+    emotion_supported = selected_model_id in voice.ELEVENLABS_EMOTION_MODELS
+    emotion_ids = list(voice.ELEVENLABS_EMOTIONS)
+    saved_emotion = elevenlabs_cfg.get("emotion", "neutral")
+    emotion = st.selectbox(
+        tr("ElevenLabs Emotion"),
+        options=emotion_ids,
+        index=emotion_ids.index(saved_emotion) if saved_emotion in emotion_ids else 0,
+        format_func=lambda e: voice.ELEVENLABS_EMOTIONS[e][1 if is_en else 0],
+        disabled=not emotion_supported,
+        help=tr("ElevenLabs Emotion Help"),
+    )
+    if not emotion_supported:
+        st.info(tr("ElevenLabs Emotion Unsupported"))
+    is_v4 = selected_model_id == "eleven_v4"
+    if is_v4:
+        st.info(tr("ElevenLabs v4 Parameters Help"))
+
+    # 音色分類篩選
+    category_labels = {
+        "all": tr("ElevenLabs Filter All"),
+        "zh-TW": tr("ElevenLabs Filter Taiwan"),
+        "zh-CN": tr("ElevenLabs Filter Mandarin"),
+        "en": tr("ElevenLabs Filter English"),
+    }
+    selected_category = st.pills(
+        tr("ElevenLabs Voice Category"),
+        options=list(category_labels.keys()),
+        default="all",
+        selection_mode="single",
+        format_func=lambda k: category_labels[k],
+        key="elevenlabs_voice_category_pills",
+    ) or "all"
+
+    # 組合預設熱門音色列表 + 帳號同步音色
+    voice_options: dict[str, str] = {}
+    for vid, zh_label, en_label, lang_tag in voice.ELEVENLABS_PRESET_VOICES:
+        if selected_category == "zh-TW" and lang_tag != "zh-TW":
+            continue
+        if selected_category == "zh-CN" and lang_tag != "zh-CN":
+            continue
+        if selected_category == "en" and not lang_tag.startswith("en"):
+            continue
+        voice_options[vid] = en_label if is_en else zh_label
+
+    # 合併已同步的帳號音色
+    synced_voices = st.session_state.get("elevenlabs_synced_voices", [])
+    for item in synced_voices:
+        vid = item.get("voice_id")
+        vname = item.get("name")
+        vcat = item.get("category", "account")
+        if vid and vid not in voice_options:
+            voice_options[vid] = f"☁️ {vname} ({vcat}) [{vid[:8]}...]"
+
+    if not voice_options:
+        voice_options = voice.get_elevenlabs_preset_voice_map("en" if is_en else "zh")
+
+    saved_voice_id = (
+        config.ui.get("elevenlabs_voice_id")
+        or elevenlabs_cfg.get("voice_id")
+        or default_voice_id
+    )
+    # 若儲存的音色因篩選不在當前分類列表，仍確保 Anna Su 或第一個項目可選
+    if saved_voice_id not in voice_options:
+        if selected_category == "all":
+            voice_options[saved_voice_id] = f"{tr('Custom Voice')} ({saved_voice_id})"
+        else:
+            saved_voice_id = next(iter(voice_options.keys()))
+
+    voice_ids = list(voice_options.keys())
+    select_col, sync_col = st.columns([4, 1])
+    with select_col:
+        selected_voice_id = st.selectbox(
+            tr("Voice Selection"),
+            options=voice_ids,
+            index=voice_ids.index(saved_voice_id) if saved_voice_id in voice_ids else 0,
+            format_func=lambda vid: voice_options.get(vid, vid),
+            help=tr("Select ElevenLabs Voice Help"),
+        )
+    with sync_col:
+        st.write("")
+        if st.button(
+            tr("Sync Voices"),
+            help=tr("Sync ElevenLabs Account Voices Help"),
+            use_container_width=True,
+            key="elevenlabs_sync_voices_btn",
+        ):
+            if not api_key.strip():
+                st.warning(tr("Please configure API Key"))
+            else:
+                with st.spinner(tr("Syncing ElevenLabs Voices")):
+                    fetched = voice.fetch_elevenlabs_voices(
+                        api_key=api_key.strip(),
+                        api_url=elevenlabs_cfg.get("api_url", "https://api.elevenlabs.io"),
+                    )
+                    if fetched:
+                        st.session_state["elevenlabs_synced_voices"] = fetched
+                        st.success(tr("Synced ElevenLabs Voices Count").format(count=len(fetched)))
+                        st.rerun()
+                    else:
+                        st.error(tr("Sync ElevenLabs Voices Failed"))
+
+    # 支援直接輸入自訂 Voice ID（可選）
+    custom_voice_id = st.text_input(
+        tr("ElevenLabs Custom Voice ID"),
+        value="",
+        placeholder=tr("ElevenLabs Custom Voice ID Placeholder"),
+        help=tr("ElevenLabs Custom Voice ID Help"),
+    ).strip()
+
+    final_voice_id = custom_voice_id if custom_voice_id else selected_voice_id
+
+    # 語速調節 (ElevenLabs 支援 0.7x - 1.2x)
+    try:
+        saved_speed = float(config.ui.get("elevenlabs_rate", elevenlabs_cfg.get("speed", 1.0)))
+    except (TypeError, ValueError):
+        saved_speed = 1.0
+    saved_speed = max(0.7, min(1.2, saved_speed))
+
+    voice_rate = st.slider(
+        tr("Voice Rate"),
+        min_value=0.7,
+        max_value=1.2,
+        value=saved_speed,
+        step=0.05,
+        help=tr("ElevenLabs Speed Help"),
+        disabled=is_v4,
+    )
+
+    # 進階音色參數
+    with st.expander(tr("Advanced Parameters"), expanded=False):
+        col1, col2 = st.columns(2)
+        with col1:
+            stability = st.slider(
+                tr("ElevenLabs Stability"),
+                min_value=0.0,
+                max_value=1.0,
+                value=float(elevenlabs_cfg.get("stability", 0.5)),
+                step=0.05,
+                help=tr("ElevenLabs Stability Help"),
+            )
+            similarity_boost = st.slider(
+                tr("ElevenLabs Similarity Boost"),
+                min_value=0.0,
+                max_value=1.0,
+                value=float(elevenlabs_cfg.get("similarity_boost", 0.75)),
+                step=0.05,
+                help=tr("ElevenLabs Similarity Boost Help"),
+            )
+        with col2:
+            style = st.slider(
+                tr("ElevenLabs Style Exaggeration"),
+                min_value=0.0,
+                max_value=1.0,
+                value=float(elevenlabs_cfg.get("style", 0.0)),
+                step=0.05,
+                help=tr("ElevenLabs Style Exaggeration Help"),
+                disabled=is_v4,
+            )
+            use_speaker_boost = st.checkbox(
+                tr("ElevenLabs Speaker Boost"),
+                value=bool(elevenlabs_cfg.get("use_speaker_boost", True)),
+                help=tr("ElevenLabs Speaker Boost Help"),
+                disabled=is_v4 or selected_model_id == "eleven_v3",
+            )
+        api_url = st.text_input(
+            tr("API URL"),
+            value=elevenlabs_cfg.get("api_url", "https://api.elevenlabs.io"),
+            help=tr("ElevenLabs API URL Help"),
+        )
+
+    # API Key 申請與配音說明
+    with st.expander(tr("ElevenLabs Usage Instructions Title"), expanded=False):
+        st.markdown(tr("ElevenLabs Usage Instructions"))
+
+    # 保存配置
+    elevenlabs_cfg["api_key"] = api_key.strip()
+    elevenlabs_cfg["api_url"] = api_url.strip() or "https://api.elevenlabs.io"
+    elevenlabs_cfg["model_id"] = selected_model_id
+    elevenlabs_cfg["emotion"] = emotion
+    elevenlabs_cfg["voice_id"] = final_voice_id
+    elevenlabs_cfg["stability"] = stability
+    elevenlabs_cfg["similarity_boost"] = similarity_boost
+    elevenlabs_cfg["style"] = style
+    elevenlabs_cfg["use_speaker_boost"] = use_speaker_boost
+    elevenlabs_cfg["speed"] = voice_rate
+
+    config.ui["elevenlabs_voice_id"] = final_voice_id
+    config.ui["elevenlabs_rate"] = voice_rate
+    config.ui["voice_name"] = final_voice_id
+    st.session_state["voice_rate"] = voice_rate
+    st.session_state["voice_pitch"] = 1.0
+
+    if api_key.strip():
+        st.success(
+            tr("ElevenLabs TTS configured").format(
+                voice=voice_options.get(final_voice_id, final_voice_id)
+            )
+        )
+    else:
+        st.warning(tr("Please configure API Key"))
+
+
+def render_elevenlabs_preview(tr):
+    """Generate a short sample using the same settings as production synthesis."""
+    text = st.text_area(
+        tr("ElevenLabs Preview Text"),
+        value=tr("Voice Preview Sample"),
+        max_chars=500,
+        key="elevenlabs_preview_text",
+    ).strip()
+    st.caption(tr("ElevenLabs Preview Help"))
+    cfg = getattr(config, "elevenlabs", {}) or {}
+    signature = (text, tuple(sorted(cfg.items())))
+    if st.button(tr("Preview Voice Synthesis"), use_container_width=True):
+        st.session_state.pop("elevenlabs_preview_audio", None)
+        if not text:
+            st.warning(tr("ElevenLabs Preview Empty"))
+        elif not (cfg.get("api_key") or os.environ.get("ELEVENLABS_API_KEY")):
+            st.warning(tr("Please configure API Key"))
+        else:
+            audio_file = os.path.join(
+                utils.storage_dir("temp", create=True), f"elevenlabs-preview-{uuid4()}.mp3"
+            )
+            try:
+                with st.spinner(tr("Synthesizing Voice")):
+                    result = voice.elevenlabs_tts(
+                        text=text,
+                        voice_name=cfg.get("voice_id", ""),
+                        voice_file=audio_file,
+                        speed=cfg.get("speed", 1.0),
+                    )
+                    if result is not None and os.path.isfile(audio_file) and os.path.getsize(audio_file):
+                        with open(audio_file, "rb") as audio:
+                            st.session_state["elevenlabs_preview_audio"] = (signature, audio.read())
+                        st.success(tr("Voice synthesis successful"))
+                    else:
+                        st.error(tr("Voice synthesis failed"))
+            except Exception:
+                logger.exception("ElevenLabs preview failed")
+                st.error(tr("Voice synthesis failed"))
+            finally:
+                if os.path.isfile(audio_file):
+                    os.remove(audio_file)
+    preview = st.session_state.get("elevenlabs_preview_audio")
+    if preview and preview[0] == signature:
+        st.audio(preview[1], format="audio/mp3")
+
+
 def render_voice_preview_new(tr, selected_engine):
     """渲染新的语音试听功能"""
+    if selected_engine == "elevenlabs":
+        render_elevenlabs_preview(tr)
+        return
     if st.button(tr("Preview Voice Synthesis"), use_container_width=True):
         play_content = tr("Voice Preview Sample")
 
@@ -2024,6 +2322,14 @@ def render_voice_preview_new(tr, selected_engine):
             voice_name = voice_type
             voice_rate = config.ui.get("doubaotts_rate", 1.0)
             voice_pitch = 1.0  # 豆包语音 TTS 不支持音调调节
+        elif selected_engine == "elevenlabs":
+            voice_name = (
+                config.ui.get("elevenlabs_voice_id")
+                or getattr(config, "elevenlabs", {}).get("voice_id")
+                or getattr(config, "DEFAULT_ELEVENLABS_VOICE_ID", "9lHjugDhwqoxA5MhX0az")
+            )
+            voice_rate = float(config.ui.get("elevenlabs_rate", getattr(config, "elevenlabs", {}).get("speed", 1.0)))
+            voice_pitch = 1.0
 
         if not voice_name:
             st.error(tr("Please configure voice settings first"))
